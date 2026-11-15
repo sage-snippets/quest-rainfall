@@ -4,17 +4,29 @@ import { expect, test, type Page, type Response } from '@playwright/test'
 
 const isTile = (r: Response) => /\/api\/forecast\/ifs\/\d{10}\/tile\/\d+\/\d+\/\d+\.png/.test(r.url())
 
+const tile2lon = (x: number, z: number) => (x / 2 ** z) * 360 - 180
+const tile2lat = (y: number, z: number) => (Math.atan(Math.sinh(Math.PI * (1 - (2 * y) / 2 ** z))) * 180) / Math.PI
+const tileZXY = (url: string) => new URL(url).pathname.split('/tile/')[1].replace('.png', '').split('/').map(Number)
+
 async function waitForTiles(page: Page, query: RegExp) {
   return page.waitForResponse((r) => isTile(r) && query.test(r.url()) && r.status() === 200, { timeout: 30_000 })
 }
 
 test('map loads genuine IFS tiles, summary and metadata', async ({ page }) => {
   const errors: string[] = []
+  const tileResponses: Response[] = []
   page.on('pageerror', (e) => errors.push(e.message))
+  page.on('response', (r) => { if (isTile(r)) tileResponses.push(r) })
   const tile = waitForTiles(page, /start_step=0&end_step=24/)
   await page.goto('/')
   const r = await tile
   expect(r.headers()['content-type']).toBe('image/png')
+  await page.waitForTimeout(2000)
+  expect(tileResponses.length).toBeGreaterThan(4)
+  for (const t of tileResponses) {
+    expect(t.status(), t.url()).toBe(200)
+    expect(t.headers()['content-type']).toBe('image/png')
+  }
 
   await expect(page.getByText(/^Run .* UTC/)).toBeVisible()
   await expect(page.getByText('ECMWF IFS forecast · model grid values, not observed rainfall')).toBeVisible()
@@ -48,14 +60,25 @@ test('timeline and window controls change the tiles', async ({ page }) => {
   await expect(page.getByText(/\(3 h accumulation\)/)).toBeVisible()
 })
 
-test('preset selection updates the regional summary; dry box shows no max location', async ({ page }) => {
+test('preset selection moves the map and updates the summary; dry box shows no max location', async ({ page }) => {
   await page.goto('/')
   const summary = page.locator('section', { has: page.getByRole('heading', { name: 'Regional summary' }) })
   await expect(summary.getByText(/Heaviest grid cell/)).toBeVisible()
   const resp = page.waitForResponse((r) => r.url().includes('region=bengaluru') && r.status() === 200)
+  // Viewport: after selecting the preset, the map must request zoomed-in tiles covering Bengaluru.
+  const zoomed = page.waitForResponse((r) => {
+    if (!isTile(r) || r.status() !== 200) return false
+    const [z, x, y] = tileZXY(r.url())
+    return z >= 7 && tile2lon(x, z) <= 77.59 && tile2lon(x + 1, z) > 77.59 && tile2lat(y, z) >= 12.97 && tile2lat(y + 1, z) < 12.97
+  }, { timeout: 30_000 })
   await page.getByRole('button', { name: 'Bengaluru', exact: true }).click()
   const body = await (await resp).json()
+  await zoomed
   await expect(summary.getByText('Bengaluru', { exact: true })).toBeVisible()
+  // Displayed statistics are exactly the API's values
+  await expect(summary.getByText('Mean (area-wtd)').locator('..')).toContainText(body.stats.mean_mm.toFixed(2))
+  await expect(summary.getByText('Max cell').locator('..')).toContainText(body.stats.max_mm.toFixed(1))
+  await expect(summary.getByText('Valid cells').locator('..')).toContainText(String(body.stats.n_valid))
   if (body.max_location === null) {
     await expect(summary.getByText('No precipitation forecast anywhere in this box for the selected window.')).toBeVisible()
     await expect(summary.getByText(/Heaviest grid cell/)).toHaveCount(0)
