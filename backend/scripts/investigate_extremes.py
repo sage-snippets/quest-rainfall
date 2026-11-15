@@ -4,7 +4,7 @@ For the hottest cells: location, neighbourhood (is it a single-pixel spike or a 
 rain band?), temporal evolution across steps, and independent dynamical context from the
 same run (mean sea-level pressure and 10 m wind) to see whether a synoptic system exists.
 
-Usage: python scripts/investigate_extremes.py data/store/ifs/2026111500
+Usage: python scripts/investigate_extremes.py data/store/ifs/2026111500 [west,south,east,north]
 """
 
 import json
@@ -31,8 +31,8 @@ for (a, b), v in ivs.items():
     print(f"  {a:>2}-{b:<2}h  {v[j, i]:6.1f} mm/{b-a}h at {lats[j]:6.2f}N {lons[i]:7.2f}E  "
           f"cells>50mm: {(v > 50).sum():4d}  >100mm: {(v > 100).sum():3d}")
 
-# Focus box: south-west Bay of Bengal / Sri Lanka
-box = (78.0, 4.0, 90.0, 16.0)
+# Focus box (west,south,east,north); default: south-west Bay of Bengal / Sri Lanka
+box = tuple(map(float, sys.argv[2].split(","))) if len(sys.argv) > 2 else (78.0, 4.0, 90.0, 16.0)
 rows = (lats >= box[1]) & (lats <= box[3]); cols = (lons >= box[0]) & (lons <= box[2])
 
 v = ivs[(0, 6)] if (0, 6) in ivs else ivs[(0, 3)] + ivs[(3, 6)]
