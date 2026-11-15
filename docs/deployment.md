@@ -26,6 +26,13 @@ checks for a newer run every hour (`app/refresh.py`).
   at a time. Measured locally at a 72 h horizon: ingest took 17 s, the store used 199 MB, and
   peak RSS was about 160 MB.
 
+## Measured (2026-11-15, IFS 00z, 0–72 h)
+
+| Environment | API up | Real data ready | Memory |
+|---|---|---|---|
+| Native (Windows dev machine) | < 1 s | 17 s | about 160 MB peak RSS |
+| Docker, `--memory=512m --cpus=0.1` (Render free limits) | 35 s | 77 s | 117 MiB after ingest, 207 MiB after the full e2e suite; no OOM, health check `healthy` |
+
 ## Environment variables
 
 See `.env.example`. None are secret. The main ones:
