@@ -226,3 +226,10 @@ def tile(req: Request, model: ModelId, run: str,
         "X-Tile-Cache": "hit" if hit else "miss",
         "X-Window": f"{w.start_step}-{w.end_step}h",
     })
+
+
+@router.get("/regions")
+def regions(response: Response):
+    """Preset regions (approximate rectangular boxes, west,south,east,north)."""
+    response.headers["Cache-Control"] = "public, max-age=86400"
+    return [{"id": k, "name": v["name"], "bbox": list(v["bbox"])} for k, v in REGIONS.items()]

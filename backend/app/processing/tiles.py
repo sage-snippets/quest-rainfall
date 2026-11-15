@@ -26,8 +26,8 @@ MERCATOR_MAX_LAT = math.degrees(math.atan(math.sinh(math.pi)))   # 85.0511...
 # (< 0.1 mm, the WMO "trace" threshold) is transparent. The last bin is open-ended.
 BINS_MM = [0.1, 0.5, 1, 2, 5, 10, 20, 30, 50, 75, 100, 150, 250]
 COLORS_RGBA = [
-    (166, 214, 255, 110),   # 0.1–0.5   trace / very light
-    (115, 182, 250, 150),   # 0.5–1
+    (166, 214, 255, 70),    # 0.1–0.5   trace / very light (subtle on dark basemaps)
+    (115, 182, 250, 115),   # 0.5–1
     (64, 145, 240, 180),    # 1–2       light
     (28, 104, 214, 200),    # 2–5
     (20, 168, 92, 210),     # 5–10      moderate

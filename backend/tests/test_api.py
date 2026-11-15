@@ -294,3 +294,9 @@ def test_error_shape_has_request_id(client):
     r = client.get("/api/forecast/latest", headers={"X-Request-ID": "abc123"}, params={"model": "nope"})
     assert r.status_code == 422
     assert r.json()["error"]["request_id"] == "abc123" and r.headers["X-Request-ID"] == "abc123"
+
+
+def test_regions_endpoint_matches_presets(client):
+    r = client.get("/api/regions").json()
+    assert [x["id"] for x in r] == list(REGIONS)
+    assert all(tuple(x["bbox"]) == REGIONS[x["id"]]["bbox"] for x in r)
