@@ -41,6 +41,7 @@ See `.env.example`. None are secret. The main ones:
 |---|---|---|
 | `PORT` | 8000 | Listen port (Render injects 10000) |
 | `QR_DATA_ROOT` | `/data/store` | Forecast store; mount a volume here for persistence |
+| `QR_MODELS` | `["ifs","aifs-single"]` | Enabled models (ingested in order; others show as pending) |
 | `QR_REFRESH_ENABLED` | `true` | Ingest at startup, then refresh periodically |
 | `QR_REFRESH_INTERVAL_S` | 3600 | Seconds between refresh checks |
 | `QR_INGEST_MAX_STEP` | 72 | Forecast horizon in hours (IFS publishes to 360) |

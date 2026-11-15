@@ -11,10 +11,14 @@ import { windowStart, type WindowMode } from './window'
 
 type RegionSel = { kind: 'preset'; id: string } | { kind: 'place'; name: string; bbox: BBox }
 
+const MODEL_LABEL: Record<string, string> = { ifs: 'IFS', 'aifs-single': 'AIFS' }
+const MODEL_LONG: Record<string, string> = { ifs: 'IFS HRES', 'aifs-single': 'AIFS Single' }
+
 const placeBox = (lat: number, lon: number): BBox => [lon - 0.5, lat - 0.5, lon + 0.5, lat + 0.5]
 
 export default function App() {
-  const model = 'ifs'
+  const [model, setModel] = useState('ifs')
+  const label = MODEL_LABEL[model] ?? model
   const models = useQuery({ queryKey: ['models'], queryFn: api.models })
   const latest = useQuery({ queryKey: ['latest', model], queryFn: () => api.latest(model), retry: (n, e) => (e as ApiError).status !== 404 && n < 2 })
   const scale = useQuery({ queryKey: ['colorscale'], queryFn: api.colorscale, staleTime: Infinity })
@@ -34,18 +38,22 @@ export default function App() {
   const start = meta && end !== null ? windowStart(meta.steps, end, mode) : null
   const win = useMemo(() => (start !== null && end !== null ? { start, end } : null), [start, end])
   const runId = meta?.run_id
-  const tiles = useMemo(() => (runId && win ? tileUrl(model, runId, win) : null), [runId, win])
+  const metaModel = meta?.model
+  const tiles = useMemo(() => (runId && win && metaModel === model ? tileUrl(model, runId, win) : null), [runId, win, metaModel, model])
 
   const regionArg = region.kind === 'preset' ? { id: region.id } : { bbox: region.bbox }
   const summary = useQuery({
-    queryKey: ['summary', meta?.run_id, win?.start, win?.end, region],
+    queryKey: ['summary', model, meta?.run_id, win?.start, win?.end, region],
     queryFn: () => api.summary(model, meta!.run_id, win!, regionArg),
-    enabled: !!meta && !!win, placeholderData: keepPreviousData,
+    enabled: !!meta && !!win && meta.model === model,
+    // Keep showing the previous result while refetching, but never across models: that
+    // would briefly display one model's statistics under the other's label.
+    placeholderData: (prev, prevQuery) => (prevQuery?.queryKey[1] === model ? keepPreviousData(prev) : undefined),
   })
   const timeline = useQuery({
-    queryKey: ['timeline', meta?.run_id, point?.[0], point?.[1]],
+    queryKey: ['timeline', model, meta?.run_id, point?.[0], point?.[1]],
     queryFn: () => api.timeline(model, meta!.run_id, point![0], point![1]),
-    enabled: !!meta && !!point,
+    enabled: !!meta && !!point && meta.model === model,
   })
 
   const regionLabel = region.kind === 'preset' ? regions.data?.find((r) => r.id === region.id)?.name ?? region.id : region.name
@@ -80,8 +88,9 @@ export default function App() {
             const ok = m.status === 'operational'
             return (
               <button key={m.id} role="radio" aria-checked={m.id === model} disabled={!ok} title={'description' in m ? m.description : undefined}
+                onClick={() => ok && setModel(m.id)}
                 className={`rounded px-2.5 py-1 text-xs ${m.id === model ? 'bg-accent/20 text-ink ring-1 ring-accent/60' : 'text-ink-3'} disabled:cursor-not-allowed`}>
-                {m.id === 'ifs' ? 'IFS HRES' : 'AIFS'}{!ok && <span className="ml-1.5 rounded bg-warn/15 px-1 text-[10px] text-warn">coming soon</span>}
+                {MODEL_LONG[m.id] ?? m.id}{!ok && <span className="ml-1.5 rounded bg-warn/15 px-1 text-[10px] text-warn">coming soon</span>}
               </button>
             )
           })}
@@ -128,7 +137,7 @@ export default function App() {
           </section>
 
           <section className="mt-auto rounded-md border border-line bg-panel-2/60 p-3 text-[11px] leading-relaxed text-ink-3">
-            <p><span className="font-medium text-warn">Forecast, not observations.</span> Values are ECMWF IFS model output on a 0.25° (~28 km) grid. Single-cell extremes in tropical convection are highly uncertain.</p>
+            <p><span className="font-medium text-warn">Forecast, not observations.</span> Values are ECMWF {label} model output on a 0.25° (~28 km) grid{model === 'aifs-single' ? ' (AIFS is a data-driven, machine-learned model; its fields are typically smoother than IFS)' : ''}. Single-cell extremes in tropical convection are highly uncertain.</p>
             <p className="mt-1.5">Total precipitation (rain + snow, water equivalent). Windows are differences of ECMWF accumulations; packing-noise negatives are clipped to 0.</p>
             <p className="mt-1.5">Contains ECMWF Open Data, CC BY 4.0. Basemap © OpenStreetMap contributors, © CARTO.</p>
           </section>
@@ -146,7 +155,7 @@ export default function App() {
                 </div>
               )}
               {tileError && <div role="alert" className="rounded-md border border-danger/40 bg-panel/95 px-3 py-2 text-xs text-danger">{tileError}</div>}
-              {meta && <div className="w-fit rounded bg-panel/85 px-2 py-1 text-[11px] text-ink-2 backdrop-blur">ECMWF IFS forecast · model grid values, not observed rainfall</div>}
+              {meta && <div className="w-fit rounded bg-panel/85 px-2 py-1 text-[11px] text-ink-2 backdrop-blur">ECMWF {label} forecast · model grid values, not observed rainfall</div>}
             </div>
           </div>
           <div className="border-t border-line bg-panel/95 p-3 backdrop-blur lg:absolute lg:bottom-6 lg:left-4 lg:w-[480px] lg:rounded-lg lg:border lg:shadow-2xl">

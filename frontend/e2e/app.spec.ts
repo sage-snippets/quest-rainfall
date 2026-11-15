@@ -4,7 +4,8 @@ import { expect, test, type Page, type Response } from '@playwright/test'
 
 const isTile = (r: Response) => /\/api\/forecast\/ifs\/\d{10}\/tile\/\d+\/\d+\/\d+\.png/.test(r.url())
 
-const tile2lon = (x: number, z: number) => (x / 2 ** z) * 360 - 180
+const isAifsTile = (r: Response) => /\/api\/forecast\/aifs-single\/\d{10}\/tile\/\d+\/\d+\/\d+\.png/.test(r.url())
+const tile2lon =(x: number, z: number) => (x / 2 ** z) * 360 - 180
 const tile2lat = (y: number, z: number) => (Math.atan(Math.sinh(Math.PI * (1 - (2 * y) / 2 ** z))) * 180) / Math.PI
 const tileZXY = (url: string) => new URL(url).pathname.split('/tile/')[1].replace('.png', '').split('/').map(Number)
 
@@ -30,8 +31,8 @@ test('map loads genuine IFS tiles, summary and metadata', async ({ page }) => {
 
   await expect(page.getByText(/^Run .* UTC/)).toBeVisible()
   await expect(page.getByText('ECMWF IFS forecast · model grid values, not observed rainfall')).toBeVisible()
-  await expect(page.getByRole('radio', { name: /AIFS/ })).toBeDisabled()
-  await expect(page.getByText('coming soon')).toBeVisible()
+  await expect(page.getByRole('radio', { name: /IFS HRES/ })).toHaveAttribute('aria-checked', 'true')
+  await expect(page.getByRole('radio', { name: /AIFS/ })).toBeEnabled()
 
   // Regional summary for the default India preset (values come from the API)
   const summary = page.locator('section', { has: page.getByRole('heading', { name: 'Regional summary' }) })
@@ -114,4 +115,33 @@ test('mobile layout stacks map, controls and panels', async ({ page }) => {
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth)
   expect(overflow).toBeLessThanOrEqual(0)
   await page.screenshot({ path: 'e2e/screenshots/mobile.png', fullPage: true })
+})
+
+test('switching to AIFS loads genuine AIFS tiles, metadata and statistics', async ({ page }) => {
+  const errors: string[] = []
+  page.on('pageerror', (e) => errors.push(e.message))
+  await page.goto('/')
+  await waitForTiles(page, /end_step=24/)
+  const meta = page.waitForResponse((r) => r.url().includes('/api/forecast/latest?model=aifs-single') && r.status() === 200)
+  const tile = page.waitForResponse((r) => isAifsTile(r) && r.status() === 200, { timeout: 30_000 })
+  const sum = page.waitForResponse((r) => /\/api\/forecast\/aifs-single\/\d{10}\/summary/.test(r.url()) && r.status() === 200)
+  await page.getByRole('radio', { name: /AIFS/ }).click()
+  const m = await (await meta).json()
+  expect((await tile).headers()['content-type']).toBe('image/png')
+  expect(m.model).toBe('aifs-single')
+  expect(m.steps.every((s: number) => s % 6 === 0)).toBe(true)          // AIFS is 6-hourly
+  await expect(page.getByRole('radio', { name: /AIFS/ })).toHaveAttribute('aria-checked', 'true')
+  await expect(page.getByText('ECMWF AIFS forecast · model grid values, not observed rainfall')).toBeVisible()
+  await expect(page.getByText(new RegExp(`^Run .*${new Date(m.run).getUTCHours().toString().padStart(2, '0')}:00 UTC`))).toBeVisible()
+  const body = await (await sum).json()
+  const summary = page.locator('section', { has: page.getByRole('heading', { name: 'Regional summary' }) })
+  await expect(summary.getByText('Mean (area-wtd)').locator('..')).toContainText(body.stats.mean_mm.toFixed(2))
+  await expect(summary.getByText('Max cell').locator('..')).toContainText(body.stats.max_mm.toFixed(1))
+  await page.screenshot({ path: 'e2e/screenshots/desktop-aifs.png' })
+  // and back to IFS
+  const back = waitForTiles(page, /end_step=/)
+  await page.getByRole('radio', { name: /IFS HRES/ }).click()
+  await back
+  await expect(page.getByText('ECMWF IFS forecast · model grid values, not observed rainfall')).toBeVisible()
+  expect(errors).toEqual([])
 })

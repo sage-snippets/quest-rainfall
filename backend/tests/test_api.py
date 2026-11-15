@@ -90,10 +90,17 @@ def test_health_without_data(tmp_path, geo):
     assert r.json()["data_available"] is False
 
 
-def test_models_ifs_operational_aifs_pending(client):
+def test_models_default_both_operational(client):
     m = {x["id"]: x for x in client.get("/api/models").json()}
     assert m["ifs"]["status"] == "operational" and m["ifs"]["runs_available"] == 1
-    assert m["aifs-single"]["status"] == "pending" and m["aifs-single"]["runs_available"] == 0
+    assert m["aifs-single"]["status"] == "operational" and m["aifs-single"]["runs_available"] == 0
+    assert "kg m**-2" in m["aifs-single"]["description"] and "metres" in m["ifs"]["description"]
+
+
+def test_model_disabled_in_config_is_pending(store_root, geo):
+    c = make_client(store_root, geo, models=["ifs"])
+    m = {x["id"]: x for x in c.get("/api/models").json()}
+    assert (m["ifs"]["status"], m["aifs-single"]["status"]) == ("operational", "pending")
 
 
 def test_latest_metadata(client):
@@ -113,10 +120,17 @@ def test_latest_404_when_nothing_ingested(tmp_path, geo):
     assert r.json()["error"]["code"] == "not_found"
 
 
-def test_aifs_not_served_while_pending(client):
-    for url in ["/api/forecast/latest?model=aifs-single", f"/api/forecast/aifs-single/{RUN}/summary?region=india"]:
-        r = client.get(url)
+def test_pending_model_is_never_served(store_root, geo):
+    c = make_client(store_root, geo, models=["ifs"])
+    for url in ["/api/forecast/latest?model=aifs-single", f"/api/forecast/aifs-single/{RUN}/summary?region=india",
+                f"/api/forecast/aifs-single/{RUN}/tile/0/0/0.png"]:
+        r = c.get(url)
         assert r.status_code == 409 and r.json()["error"]["code"] == "model_unavailable"
+
+
+def test_enabled_model_without_data_is_404_not_fabricated(client):
+    r = client.get("/api/forecast/latest?model=aifs-single")
+    assert r.status_code == 404 and "not ingested" in r.json()["error"]["message"]
 
 
 def test_unknown_model_rejected(client):

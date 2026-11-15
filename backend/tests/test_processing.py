@@ -122,7 +122,7 @@ def test_validate_meta_accepts_ifs_tp():
 
 
 @pytest.mark.parametrize("key,bad", [
-    ("shortName", "cp"), ("units", "kg m**-2"), ("stepType", "instant"), ("startStep", 6),
+    ("shortName", "cp"), ("units", "kg m**-2 s**-1"), ("units", "mm"), ("stepType", "instant"), ("startStep", 6),
     ("stepUnits", 0), ("gridType", "reduced_gg"), ("jPointsAreConsecutive", 1), ("Ni", 1439),
 ])
 def test_validate_meta_rejects(key, bad):

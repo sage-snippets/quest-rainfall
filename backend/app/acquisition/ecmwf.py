@@ -22,9 +22,22 @@ log = logging.getLogger(__name__)
 # Mirrors supported by the official client, tried in order.
 SOURCES = ("ecmwf", "aws", "azure")
 
-# Published forecast steps (hours), verified against data.ecmwf.int on 2026-11-15.
-# IFS 00/12z (stream oper): 0-144 by 3 h, then 150-360 by 6 h.
+# Published forecast steps (hours) and runs, verified against data.ecmwf.int on 2026-11-15.
+# IFS 00/12z (stream oper): 0-144 by 3 h, then 150-360 by 6 h. IFS 06/18z is a different
+#   stream (scda) that stops at 90 h, so it is not used.
+# AIFS-single 00/06/12/18z (all stream oper): 0-360 by 6 h.
 IFS_STEPS = list(range(0, 145, 3)) + list(range(150, 361, 6))
+AIFS_STEPS = list(range(0, 361, 6))
+MODEL_SPECS = {
+    "ifs": {"steps": IFS_STEPS, "run_hours": (0, 12), "label": "00/12z"},
+    "aifs-single": {"steps": AIFS_STEPS, "run_hours": (0, 6, 12, 18), "label": "00/06/12/18z"},
+}
+
+
+def spec(model: str) -> dict:
+    if model not in MODEL_SPECS:
+        raise ValueError(f"unknown model '{model}'")
+    return MODEL_SPECS[model]
 
 
 class AcquisitionError(RuntimeError):
@@ -57,14 +70,17 @@ INDEX_URL = ("https://data.ecmwf.int/forecasts/{d:%Y%m%d}/{d:%H}z/{model}/0p25/o
 
 def latest_run(model: str = "ifs", last_step: int = 144, lookback_h: int = 96,
                now: datetime | None = None, client: httpx.Client | None = None) -> datetime:
-    """Latest 00z/12z run whose `tp` index for `last_step` is published (run complete to it).
+    """Latest run (of the model's supported run hours) whose `tp` index for `last_step` is
+    published, i.e. the run is complete up to the horizon we need.
 
     The official client's latest() also returns 06/18z runs, which for IFS are a different
-    stream (scda) that stops at 90 h, so we probe the 00/12z (stream oper) runs ourselves,
+    stream (scda) that stops at 90 h, so we probe the supported (stream oper) runs ourselves,
     newest first, within ECMWF's ~4-day retention window.
     """
+    hours = spec(model)["run_hours"]
+    step_h = 24 // len(hours)                 # 12 h for IFS, 6 h for AIFS
     now = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
-    t = now.replace(hour=12 if now.hour >= 12 else 0, minute=0, second=0, microsecond=0)
+    t = now.replace(hour=max(h for h in hours if h <= now.hour), minute=0, second=0, microsecond=0)
     own = client is None
     client = client or httpx.Client(timeout=15, follow_redirects=True)
     try:
@@ -75,11 +91,12 @@ def latest_run(model: str = "ifs", last_step: int = 144, lookback_h: int = 96,
                 return t
             if r.status_code not in (403, 404):
                 r.raise_for_status()          # 5xx etc.: let the caller retry later
-            t -= timedelta(hours=12)
+            t -= timedelta(hours=step_h)
     finally:
         if own:
             client.close()
-    raise AcquisitionError(f"no complete 00/12z {model} run up to step {last_step} in the last {lookback_h} h")
+    raise AcquisitionError(f"no complete {spec(model)['label']} {model} run up to step {last_step} "
+                           f"in the last {lookback_h} h")
 
 
 def fetch_tp(
@@ -94,13 +111,13 @@ def fetch_tp(
 
     Tries each mirror with exponential backoff. Raises AcquisitionError if all fail.
     """
-    if model == "ifs":
-        bad = sorted(set(steps) - set(IFS_STEPS))
-        if bad:
-            raise ValueError(f"steps not published for IFS: {bad}")
-    if run.hour not in (0, 12):
-        # 06/18z IFS runs are a different stream (scda) with a 90 h horizon; not used.
-        raise ValueError("only 00z and 12z IFS runs are supported")
+    sp = spec(model)
+    bad = sorted(set(steps) - set(sp["steps"]))
+    if bad:
+        raise ValueError(f"steps not published for {model}: {bad}")
+    if run.hour not in sp["run_hours"]:
+        hours = " and ".join(f"{h:02d}z" for h in sp["run_hours"])
+        raise ValueError(f"only {hours} {model} runs are supported")
 
     target.parent.mkdir(parents=True, exist_ok=True)
     tmp = target.with_suffix(target.suffix + ".part")

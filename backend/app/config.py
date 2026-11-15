@@ -14,6 +14,7 @@ class Settings(BaseSettings):
     array_cache_size: int = 48
     tile_cache_size: int = 4096            # rendered PNG tiles kept in RAM (typ. 1-10 kB)             # decoded 0.25° grids kept in RAM (~4 MB each)
     static_dir: Path | None = None         # built frontend (index.html); served at / if set
+    models: list[str] = ["ifs", "aifs-single"]   # enabled (operational) models, in ingest order
     refresh_enabled: bool = False          # background ECMWF ingest at startup + periodically
     refresh_interval_s: int = 3600
     ingest_max_step: int = 72              # forecast horizon to ingest (h); IFS publishes to 360

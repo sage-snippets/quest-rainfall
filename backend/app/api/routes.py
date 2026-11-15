@@ -17,13 +17,20 @@ from .schemas import (GeocodeResponse, GridResponse, ModelInfo, RunMeta, Stats, 
 router = APIRouter(prefix="/api")
 
 MODELS = {
-    "ifs": {"name": "ECMWF IFS HRES (0.25°)", "status": "operational",
-            "description": "Physics-based Integrated Forecasting System, 00/12 UTC runs. "
-                           "Total precipitation ingested and validated."},
-    "aifs-single": {"name": "ECMWF AIFS Single (0.25°)", "status": "pending",
-                    "description": "Data-driven model. Not yet integrated: its GRIB metadata "
-                                   "has not been validated in this application."},
+    "ifs": {"name": "ECMWF IFS HRES (0.25°)",
+            "description": "Physics-based Integrated Forecasting System. 00/12 UTC runs, 3-hourly "
+                           "steps to 144 h then 6-hourly. tp encoded in metres."},
+    "aifs-single": {"name": "ECMWF AIFS Single (0.25°)",
+                    "description": "Data-driven (machine-learned) model. 00/06/12/18 UTC runs, "
+                                   "6-hourly steps. tp encoded in kg m**-2 (= mm)."},
 }
+
+
+def _status(req: Request, model: str) -> str:
+    """A model is operational only when enabled in configuration (QR_MODELS)."""
+    return "operational" if model in req.app.state.settings.models else "pending"
+
+
 ModelId = Literal["ifs", "aifs-single"]
 IMMUTABLE = "public, max-age=3600"     # a run's data never changes once ingested
 
@@ -32,13 +39,13 @@ def _store(req: Request):
     return req.app.state.store
 
 
-def _operational(model: str) -> None:
-    if MODELS[model]["status"] != "operational":
+def _operational(req: Request, model: str) -> None:
+    if _status(req, model) != "operational":
         raise HTTPException(409, f"model '{model}' is not available yet (status: pending)")
 
 
 def _manifest(req: Request, model: str, run: str) -> dict:
-    _operational(model)
+    _operational(req, model)
     try:
         return _store(req).manifest(model, run)
     except NotFound as e:
@@ -96,17 +103,19 @@ def health(req: Request):
         latest[m] = runs[0] if runs else None
     return {"status": "ok", "latest_runs": latest, "data_available": latest["ifs"] is not None,
             "ingest": req.app.state.refresher.status,
+            "ingest_by_model": req.app.state.refresher.by_model,
             "refresh_enabled": req.app.state.settings.refresh_enabled}
 
 
 @router.get("/models", response_model=list[ModelInfo])
 def models(req: Request):
-    return [ModelInfo(id=k, runs_available=len(_store(req).runs(k)), **v) for k, v in MODELS.items()]
+    return [ModelInfo(id=k, status=_status(req, k), runs_available=len(_store(req).runs(k)), **v)
+            for k, v in MODELS.items()]
 
 
 @router.get("/forecast/latest", response_model=RunMeta)
 def latest(req: Request, response: Response, model: ModelId = "ifs"):
-    _operational(model)
+    _operational(req, model)
     try:
         run = _store(req).latest(model)
     except NotFound as e:

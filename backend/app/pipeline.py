@@ -23,7 +23,7 @@ from pathlib import Path
 
 import numpy as np
 
-from .acquisition.ecmwf import IFS_STEPS, fetch_tp, latest_run
+from .acquisition.ecmwf import fetch_tp, latest_run, spec
 from .processing.precip import interval, iter_tp
 
 log = logging.getLogger(__name__)
@@ -34,9 +34,10 @@ def run_dir(model: str, run: datetime, root: Path = DATA_ROOT) -> Path:
     return root / model / run.strftime("%Y%m%d%H")
 
 
-def steps_up_to(max_step: int) -> list[int]:
-    """All published IFS steps from 0 to max_step (3-hourly to 144 h, then 6-hourly)."""
-    return [s for s in IFS_STEPS if s <= max_step]
+def steps_up_to(max_step: int, model: str = "ifs") -> list[int]:
+    """All published steps of `model` from 0 to max_step (IFS: 3-hourly to 144 h then
+    6-hourly; AIFS: 6-hourly)."""
+    return [s for s in spec(model)["steps"] if s <= max_step]
 
 
 def process_file(grib: Path, out: Path, model: str, retrieval: dict | None = None) -> dict:

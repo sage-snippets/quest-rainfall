@@ -1,7 +1,8 @@
 """GRIB2 total-precipitation decoding and scientific processing.
 
 Conventions (all validated from GRIB headers, never assumed):
-- `tp` is accumulated from forecast start (stepType=accum, startStep=0), in metres.
+- `tp` is accumulated from forecast start (stepType=accum, startStep=0), in metres (IFS)
+  or kg m**-2 (AIFS); both are converted to mm using the units key of each message.
 - Output grids are mm, latitude descending (north->south), longitude in [-180, 180) ascending.
 - Interval precipitation P(t1->t2) = tp(0->t2) - tp(0->t1).
   Small negatives produced by GRIB packing (lossy quantisation) are clamped to 0 only when
@@ -18,6 +19,9 @@ import eccodes
 import numpy as np
 
 M_TO_MM = 1000.0
+# Accepted `tp` units and their factor to mm of water. IFS encodes tp in metres (paramId 228);
+# AIFS encodes it in kg m**-2 (paramId 228228), and 1 kg m**-2 of water == 1 mm.
+UNIT_TO_MM = {"m": M_TO_MM, "kg m**-2": 1.0}
 # Relative slack on the packing quantum to absorb float rounding in the subtraction itself.
 _QUANTUM_SLACK = 1e-6
 
@@ -70,7 +74,7 @@ def validate_meta(m: dict) -> None:
     """Fail loudly if a message is not accumulated total precipitation on a regular grid."""
     checks = {
         "shortName == tp": m["shortName"] == "tp",
-        "units == m": m["units"] == "m",
+        "units in (m, kg m**-2)": m["units"] in UNIT_TO_MM,
         "stepType == accum": m["stepType"] == "accum",
         "startStep == 0 (accumulated from forecast start)": m["startStep"] == 0,
         "stepUnits == hours": m["stepUnits"] == 1,
@@ -88,7 +92,7 @@ def validate_meta(m: dict) -> None:
 
 
 def packing_quantum_m(m: dict) -> float:
-    """Precision of simple/CCSDS-packed GRIB values: 2**E * 10**-D (in the field's units).
+    """Precision of simple/CCSDS-packed GRIB values: 2**E * 10**-D, in the field's own units.
 
     A field with bitsPerValue == 0 is constant (e.g. tp at step 0 == 0) and is stored
     exactly, so its quantum is 0 - the scale factors are meaningless in that case.
@@ -147,8 +151,8 @@ def _decode(gid) -> TpField:
     return TpField(
         run_date=m["dataDate"], run_time=m["dataTime"],
         start_step=m["startStep"], end_step=m["endStep"],
-        lats=lats, lons=lons, values_mm=vals * M_TO_MM,
-        quantum_mm=packing_quantum_m(m) * M_TO_MM, meta=m,
+        lats=lats, lons=lons, values_mm=vals * UNIT_TO_MM[m["units"]],
+        quantum_mm=packing_quantum_m(m) * UNIT_TO_MM[m["units"]], meta=m,
     )
 
 

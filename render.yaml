@@ -7,7 +7,10 @@ services:
     runtime: docker
     plan: free
     dockerfilePath: ./Dockerfile
-    healthCheckPath: /api/health
+    # Render switches traffic to a new instance only when this returns 200. /api/forecast/latest
+    # is 404 until real IFS data has been ingested, so a deploy never serves an empty app, and
+    # if ECMWF is unreachable during a deploy the old instance keeps serving.
+    healthCheckPath: /api/forecast/latest
     autoDeploy: true
     envVars:
       - key: QR_INGEST_MAX_STEP        # forecast horizon (h); keep modest on 0.1 CPU

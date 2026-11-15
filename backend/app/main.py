@@ -70,7 +70,8 @@ def create_app(settings: Settings | None = None, geocoder: Geocoder | None = Non
     settings = settings or Settings()
     setup_logging(settings.log_level)
     store = Store(settings.data_root, settings.array_cache_size)
-    refresher = Refresher(store, settings.data_root, max_step=settings.ingest_max_step,
+    refresher = Refresher(store, settings.data_root, models=settings.models,
+                          max_step=settings.ingest_max_step,
                           interval_s=settings.refresh_interval_s, keep_runs=settings.keep_runs)
 
     @asynccontextmanager

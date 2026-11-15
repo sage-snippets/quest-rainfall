@@ -240,9 +240,10 @@ def test_tile_invalid(client, path, params, status):
     assert r.status_code == status and r.json()["error"]["code"] == "invalid_input"
 
 
-def test_tile_unknown_run_and_pending_model(client):
+def test_tile_unknown_run_and_model_without_data(client):
     assert client.get("/api/forecast/ifs/2026010100/tile/0/0/0.png").status_code == 404
-    assert client.get("/api/forecast/aifs-single/2026111500/tile/0/0/0.png").status_code == 409
+    # AIFS is enabled but this store holds no AIFS run: 404, never a fabricated tile
+    assert client.get("/api/forecast/aifs-single/2026111500/tile/0/0/0.png").status_code == 404
 
 
 def test_colorscale_endpoint(client):

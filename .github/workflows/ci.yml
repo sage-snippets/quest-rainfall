@@ -44,11 +44,12 @@ jobs:
         run: |
           docker run -d --name app -p 8000:8000 --memory=512m --cpus=0.5 \
             -e QR_INGEST_MAX_STEP=72 -e QR_ARRAY_CACHE_SIZE=16 quest-rainfall
-      - name: Wait for real IFS data (startup ingest)
+      - name: Wait for real IFS and AIFS data (startup ingest)
         run: |
           for i in $(seq 1 90); do
-            if curl -fs localhost:8000/api/health | grep -q '"data_available":true'; then
-              curl -s localhost:8000/api/health; echo; exit 0; fi
+            H=$(curl -fs localhost:8000/api/health || true)
+            if echo "$H" | grep -q '"ifs":"20' && echo "$H" | grep -q '"aifs-single":"20'; then
+              echo "$H"; exit 0; fi
             sleep 10
           done
           docker logs app | tail -50; exit 1

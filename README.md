@@ -1,7 +1,7 @@
 # QUEST Rainfall: ECMWF Precipitation Forecast Application
 
 A full-stack web application for exploring **genuine ECMWF Open Data precipitation forecasts**
-(IFS HRES, 0.25°) on an interactive map, with forecast timelines, regional statistics and
+(IFS HRES and AIFS Single, 0.25°) on an interactive map, with forecast timelines, regional statistics and
 point time series. Built for the QUEST Lab Full Stack AI Pre-doctoral application (IISc Bangalore).
 
 > **Forecast, not observations.** Every value shown is ECMWF model output for a 0.25° (~28 km)
@@ -47,8 +47,9 @@ point time series. Built for the QUEST Lab Full Stack AI Pre-doctoral applicatio
   The heaviest-cell location is shown only when precipitation actually falls.
 - **Point forecast.** Click the map or search a place to see a bar chart of precipitation per
   interval at the nearest grid cell.
-- **Model selector.** IFS is operational. AIFS is shown as *coming soon* and the API refuses it
-  with `409`, so it is never advertised as working.
+- **Model selector: IFS HRES and AIFS Single.** AIFS was enabled only after its GRIB metadata was
+  inspected and validated against real data (its `tp` is in kg m⁻², not metres). A model disabled
+  in configuration (`QR_MODELS`) is shown as *coming soon*, and the API refuses it with `409`.
 - **Loading, empty, error and mobile states.** The app shows clear messages when no forecast has
   been ingested, when the geocoder is down, or when tiles fail. Desktop and mobile layouts are both supported.
 
@@ -117,9 +118,18 @@ Dockerfile, render.yaml, .github/workflows/ci.yml
 
 - **ECMWF Open Data**, <https://data.ecmwf.int/forecasts/>, accessed with the official client
   [`ecmwf-opendata`](https://github.com/ecmwf/ecmwf-opendata). Licence **CC BY 4.0**: © ECMWF.
-- **Model:** IFS HRES, stream `oper`, type `fc`, 0.25° regular lat/lon (1440 × 721).
-- **Variable:** `tp`, total precipitation (rain plus snow, liquid-water equivalent), in metres,
-  accumulated from the start of the forecast.
+- **Models** (stream `oper`, type `fc`, 0.25° regular lat/lon, 1440 × 721):
+
+  | | IFS HRES | AIFS Single |
+  |---|---|---|
+  | Type | Physics-based NWP | Data-driven (machine-learned) |
+  | Runs used | 00z, 12z | 00z, 06z, 12z, 18z |
+  | Steps | 3-hourly to 144 h, then 6-hourly to 360 h | 6-hourly to 360 h |
+  | `tp` encoding | paramId 228, **units `m`** | paramId 228228, class `ai`, **units `kg m**-2`** (= mm) |
+  | Packing precision (e.g. 12 h) | 0.244 mm | 0.0625 mm |
+
+- **Variable:** `tp`, total precipitation (rain plus snow, liquid-water equivalent), accumulated
+  from the start of the forecast. The units are read from each message (see below).
 - **Runs used:** 00z and 12z. Steps are 3-hourly to 144 h, then 6-hourly to 360 h. The app ingests
   0–72 h by default (`QR_INGEST_MAX_STEP`). The 06z and 18z IFS runs belong to a different stream
   (`scda`) that stops at 90 h, so the app skips them.
@@ -140,7 +150,13 @@ All assumptions are **checked against GRIB metadata** and never hard-coded. See
    increment and scan-mode keys. The data are normalised to latitude descending (N→S) and longitude
    ascending in [−180, 180). The real IFS grid starts at 180°, a fact confirmed from the header
    rather than assumed.
-3. **Units:** metres × 1000 = mm.
+3. **Units from metadata:** a table maps the GRIB `units` key to mm: `m` → ×1000 (IFS) and
+   `kg m**-2` → ×1 (AIFS; 1 kg m⁻² of water = 1 mm). Any other unit (e.g. a rate in
+   `kg m**-2 s**-1`) is rejected. The packing quantum is converted with the same factor. Applying
+   IFS's ×1000 to AIFS would inflate rainfall a thousandfold. A deliberately injected version of
+   that bug is caught by the AIFS tests. As an independent check, over the same valid day the
+   area-weighted global mean was **3.11 mm (AIFS) vs 3.17 mm (IFS)**, with a spatial correlation
+   of 0.83.
 4. **Accumulated → interval precipitation:** `P(t₁→t₂) = tp(0→t₂) − tp(0→t₁)`, using
    consecutive published steps.
 5. **Negative differences and packing precision.** GRIB simple/CCSDS packing quantises values to
@@ -233,7 +249,7 @@ Interactive OpenAPI docs are at **`/docs`**. Every error has the shape
 | Endpoint | Description |
 |---|---|
 | `GET /api/health` | Status, latest run per model, `data_available`, ingest state (`checking`, `ingesting`, `idle` or `error`, plus `last_error`) |
-| `GET /api/models` | `ifs` is `operational`; `aifs-single` is `pending` |
+| `GET /api/models` | Both models, with `status` (`operational` if enabled in `QR_MODELS`, else `pending`) and runs available |
 | `GET /api/forecast/latest?model=ifs` | Run metadata: steps, intervals with valid times and QC, source URLs, attribution |
 | `GET /api/forecast/{model}/{run}/grid?bbox=w,s,e,n&end_step=&start_step=` | Gridded mm values for a box (lat N→S); `413` if over the cell limit |
 | `GET /api/forecast/{model}/{run}/summary?region=…\|bbox=…&end_step=&start_step=&wet_threshold_mm=` | Area-weighted regional statistics; `max_location` is `null` when the box is dry |
@@ -256,10 +272,10 @@ curl "http://localhost:8000/api/forecast/ifs/2026111500/summary?region=india&sta
 
 | Suite | Command | Count | What it covers |
 |---|---|---|---|
-| Backend | `cd backend && pytest` | 144, plus 1 live test enabled with `RUN_LIVE=1` | GRIB decoding against a **real ECMWF fixture** (ecCodes vs cfgrib, bit-for-bit); metadata validation; interval maths, units, packing tolerance, NaN propagation; longitude/latitude orientation using synthetic GRIB files; antimeridian boxes; area-weighted stats against analytic values; acquisition retries and mirror fallback; 00/12z run discovery; atomic ingest; refresh failure keeping the last run; all API endpoints and error paths; SPA serving and MIME types |
+| Backend | `cd backend && pytest` | 154, plus 1 live test enabled with `RUN_LIVE=1` | GRIB decoding against a **real ECMWF fixture** (ecCodes vs cfgrib, bit-for-bit); metadata validation; interval maths, units, packing tolerance, NaN propagation; longitude/latitude orientation using synthetic GRIB files; antimeridian boxes; area-weighted stats against analytic values; acquisition retries and mirror fallback; 00/12z run discovery; atomic ingest; refresh failure keeping the last run; all API endpoints and error paths; SPA serving and MIME types |
 | Tile geometry | (in the backend suite) | 35 | Forward-Mercator prediction of the exact pixel footprint of synthetic cells (both hemispheres, high latitude, equator), north-up/east-right, antimeridian wrap, seamless 2×2 and dateline stitching, absolute colours |
 | Frontend unit | `cd frontend && npm test` | 3 | Accumulation-window logic |
-| Browser e2e | `cd frontend && npm run e2e` (set `BASE_URL` to target a server) | 5 | Real tiles are 200 PNG; the timeline changes the tile URL; presets move the viewport and the summary matches the API; search and map click give a point forecast; mobile layout without overflow |
+| Browser e2e | `cd frontend && npm run e2e` (set `BASE_URL` to target a server) | 6 | Real tiles are 200 PNG; switching to AIFS loads AIFS tiles, metadata and matching statistics; the timeline changes the tile URL; presets move the viewport and the summary matches the API; search and map click give a point forecast; mobile layout without overflow |
 | Container (CI) | `.github/workflows/ci.yml` | n/a | Image build with ecCodes self-test, run at 512 MB, real ingest, smoke checks, e2e against the container |
 
 **Test quality checks.** The processing and tile suites were mutation-tested. Bugs were injected
@@ -289,7 +305,9 @@ summary, timeline, geocode, AIFS 409) passed, and all 5 Playwright e2e tests pas
 
 ## Known limitations
 
-- **Model:** IFS only. AIFS is listed as *pending* and disabled until its GRIB metadata has been validated.
+- **Models:** IFS HRES and AIFS Single (deterministic). The AIFS ensemble (`aifs-ens`) and IFS
+  ensemble are not used. AIFS fields are smoother than IFS: for the same valid day its maximum was
+  190 mm against 385 mm for IFS. This is model behaviour, not processing.
 - **Forecast, not observations.** No verification against rain gauges or satellite (e.g. GPM
   IMERG). Single-cell tropical extremes are highly uncertain.
 - **Resolution:** 0.25° (~28 km). Point values use the nearest cell without interpolation, and
