@@ -20,6 +20,7 @@ class Store:
         self.root = Path(root)
         self._load = lru_cache(maxsize=cache_size)(self._load_uncached)
         self._manifest = lru_cache(maxsize=64)(self._manifest_uncached)
+        self._window = lru_cache(maxsize=8)(self._window_uncached)
 
     # ---------------------------------------------------------------- runs
     def runs(self, model: str) -> list[str]:
@@ -74,6 +75,9 @@ class Store:
         start == 0: the raw ECMWF accumulated field. Otherwise: the sum of the QC-checked
         native intervals in between (each >= 0, so the window total is >= 0).
         """
+        return self._window(model, run, start, end)
+
+    def _window_uncached(self, model: str, run: str, start: int, end: int) -> np.ndarray:
         steps = self.manifest(model, run)["steps"]
         if start not in steps or end not in steps:
             raise ValueError(f"steps must be among the available steps {steps}")
@@ -85,4 +89,6 @@ class Store:
         total = np.zeros_like(self.interval(model, run, steps[i], steps[i + 1]), dtype=np.float64)
         for a, b in zip(steps[i:j], steps[i + 1:j + 1]):
             total += self.interval(model, run, a, b)
-        return total.astype(np.float32)
+        out = total.astype(np.float32)
+        out.setflags(write=False)
+        return out

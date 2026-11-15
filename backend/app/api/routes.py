@@ -4,8 +4,9 @@ from datetime import datetime, timedelta
 from typing import Literal
 
 import numpy as np
-from fastapi import APIRouter, HTTPException, Query, Request, Response
+from fastapi import APIRouter, HTTPException, Path, Query, Request, Response
 
+from ..processing import tiles
 from ..processing.precip import area_weighted_stats, point_value, subset
 from ..regions import REGIONS
 from ..store import NotFound
@@ -191,3 +192,37 @@ def geocode(req: Request, q: str = Query(..., min_length=2, max_length=100),
     except GeocoderUnavailable as e:
         raise HTTPException(502, str(e))
     return GeocodeResponse(query=q, cached=cached, results=results)
+
+
+@router.get("/colorscale")
+def colorscale(response: Response):
+    """Absolute precipitation colour scale used by every tile (legend source of truth)."""
+    response.headers["Cache-Control"] = "public, max-age=86400"
+    return tiles.colorscale()
+
+
+@router.get("/forecast/{model}/{run}/tile/{z}/{x}/{y}.png",
+            responses={200: {"content": {"image/png": {}}}}, response_class=Response)
+def tile(req: Request, model: ModelId, run: str,
+         z: int = Path(..., ge=0, le=tiles.MAX_ZOOM), x: int = Path(..., ge=0), y: int = Path(..., ge=0),
+         end_step: int | None = None, start_step: int | None = None):
+    m = _manifest(req, model, run)
+    if x >= 2 ** z or y >= 2 ** z:
+        raise HTTPException(422, f"x and y must be in [0, {2 ** z - 1}] at z={z}")
+    values, w = _window(req, m, model, run, start_step, end_step)
+    cache = req.app.state.tile_cache
+    key = (model, run, w.start_step, w.end_step, z, x, y)
+    png = cache.get(key)
+    hit = png is not None
+    if not hit:
+        lats, lons = _store(req).axes(model, run)
+        png = tiles.render_tile(values, tiles.Grid.from_axes(lats, lons), z, x, y)
+        if png == tiles.EMPTY_TILE:
+            png = tiles.EMPTY_TILE          # share one buffer for all dry tiles
+        cache.put(key, png)
+    return Response(png, media_type="image/png", headers={
+        # A run's data never changes once ingested, and the URL names run + window.
+        "Cache-Control": "public, max-age=86400, immutable",
+        "X-Tile-Cache": "hit" if hit else "miss",
+        "X-Window": f"{w.start_step}-{w.end_step}h",
+    })

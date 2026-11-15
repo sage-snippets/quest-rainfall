@@ -3,7 +3,9 @@ from __future__ import annotations
 
 import logging
 import time
+import threading
 import uuid
+from collections import OrderedDict
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
@@ -30,13 +32,37 @@ def _err(status: int, message, request_id: str) -> JSONResponse:
                                            "request_id": request_id}})
 
 
+class LRUBytes:
+    """Small LRU for rendered tiles; locked because sync routes run in a thread pool."""
+    def __init__(self, maxsize: int):
+        self.maxsize, self._d, self._lock = maxsize, OrderedDict(), threading.Lock()
+
+    def get(self, key):
+        with self._lock:
+            v = self._d.get(key)
+            if v is not None:
+                self._d.move_to_end(key)
+            return v
+
+    def put(self, key, value) -> None:
+        with self._lock:
+            self._d[key] = value
+            self._d.move_to_end(key)
+            while len(self._d) > self.maxsize:
+                self._d.popitem(last=False)
+
+    def __len__(self):
+        return len(self._d)
+
+
 def create_app(settings: Settings | None = None, geocoder: Geocoder | None = None) -> FastAPI:
     settings = settings or Settings()
     setup_logging(settings.log_level)
-    app = FastAPI(title="QUEST Rainfall API", version="0.3.0",
+    app = FastAPI(title="QUEST Rainfall API", version="0.4.0",
                   description="ECMWF Open Data precipitation forecasts (IFS). Forecasts, not observations.")
     app.state.settings = settings
     app.state.store = Store(settings.data_root, settings.array_cache_size)
+    app.state.tile_cache = LRUBytes(settings.tile_cache_size)
     app.state.geocoder = geocoder or Geocoder(settings.geocode_url, settings.geocode_timeout_s,
                                               settings.geocode_cache_ttl_s)
 
