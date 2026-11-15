@@ -1,0 +1,16 @@
+# Runtime dependencies (pinned to versions verified in this project).
+# ecCodes native library is bundled in the `eccodes` binary wheel (Windows & manylinux).
+ecmwf-opendata==0.3.35
+eccodes==2.50.1
+cfgrib==0.9.15.1
+xarray==2026.9.0
+numpy==2.5.4
+pandas==3.1.1
+fastapi==0.163.1
+uvicorn[standard]==0.54.0
+pydantic==2.14.3
+pydantic-settings==2.16.3
+APScheduler==3.11.3
+pillow==13.0.0
+httpx==0.28.1
+structlog==26.1.0
