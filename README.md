@@ -8,10 +8,10 @@ point time series. Built for the QUEST Lab Full Stack AI Pre-doctoral applicatio
 > grid cell. Nothing in the application is mocked, interpolated into existence or "corrected".
 
 - **Repository:** https://github.com/sage-snippets/quest-rainfall
-- **Live app:** _deployment to Render in progress_ (see [Deployment](#deployment))
+- **Live app:** **https://quest-rainfall.onrender.com** (Render free tier; the first visit after 15 min idle takes about 1–2 min to wake and re-ingest)
 - **CI:** GitHub Actions runs backend, frontend and container tests, the container at 512 MB with real ECMWF data
 
-![India, 24 h accumulation from the IFS 2026-11-15 00z run](docs/img/m5-desktop-india.png)
+![Live deployment: India, 24 h accumulation from the IFS 2026-11-15 00z run](docs/img/live-render-desktop-india.png)
 
 ---
 
@@ -282,6 +282,10 @@ start. Hugging Face Docker Spaces, Koyeb, Fly.io, Cloud Run and Oracle Cloud wer
 
 Deploy: Render → **New → Blueprint** → select this repo → **Apply**. Then check
 `https://<service>.onrender.com/api/health` until `data_available` is `true`.
+
+**Live deployment:** https://quest-rainfall.onrender.com, verified on 2026-11-15. Health showed
+real IFS run 2026111500 ingested by the server itself; the smoke checks (MIME types, PNG tiles,
+summary, timeline, geocode, AIFS 409) passed, and all 5 Playwright e2e tests passed against the live site.
 
 ## Known limitations
 
