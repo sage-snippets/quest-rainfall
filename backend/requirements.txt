@@ -1,15 +1,12 @@
 # Runtime dependencies (pinned to versions verified in this project).
-# ecCodes native library is bundled in the `eccodes` binary wheel (Windows & manylinux).
+# The ecCodes native library ships inside the `eccodes` binary wheel (Windows and manylinux),
+# so no OS package is needed; the Docker build self-tests it on a real GRIB2 file.
 ecmwf-opendata==0.3.35
 eccodes==2.50.1
-cfgrib==0.9.15.1
-xarray==2026.9.0
 numpy==2.5.4
-pandas==3.1.1
 fastapi==0.163.1
 uvicorn[standard]==0.54.0
 pydantic==2.14.3
 pydantic-settings==2.16.3
-APScheduler==3.11.3
 pillow==13.0.0
 httpx==0.28.1

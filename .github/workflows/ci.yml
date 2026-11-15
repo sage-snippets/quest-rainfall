@@ -1,0 +1,78 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.13" }
+      - run: pip install -r requirements-dev.txt
+      - run: pytest -q
+      - name: Live ECMWF retrieval test
+        run: RUN_LIVE=1 pytest -q -k live
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: frontend } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: "24" }
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm test
+      - run: npm run build
+
+  container:
+    # Builds the production image and tests the running container under free-tier-like
+    # limits (512 MB RAM) against real ECMWF data, including the browser e2e suite.
+    needs: [backend, frontend]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build image (includes ecCodes self-test)
+        run: docker build -t quest-rainfall .
+      - name: Run container (512 MB, 0.5 CPU)
+        run: |
+          docker run -d --name app -p 8000:8000 --memory=512m --cpus=0.5 \
+            -e QR_INGEST_MAX_STEP=72 -e QR_ARRAY_CACHE_SIZE=16 quest-rainfall
+      - name: Wait for real IFS data (startup ingest)
+        run: |
+          for i in $(seq 1 90); do
+            if curl -fs localhost:8000/api/health | grep -q '"data_available":true'; then
+              curl -s localhost:8000/api/health; echo; exit 0; fi
+            sleep 10
+          done
+          docker logs app | tail -50; exit 1
+      - name: Smoke checks
+        run: |
+          set -e
+          docker exec app python -c "import eccodes; print('ecCodes', eccodes.codes_get_api_version())"
+          RUN=$(curl -fs localhost:8000/api/forecast/latest | python3 -c "import sys,json;print(json.load(sys.stdin)['run_id'])")
+          curl -fs localhost:8000/ | grep -q 'id="root"'
+          W=$(curl -fs localhost:8000/ | grep -o 'assets/index-[^"]*\.js' | head -1)
+          curl -fsI "localhost:8000/$W" | grep -i 'content-type: text/javascript'
+          curl -fs "localhost:8000/api/forecast/ifs/$RUN/tile/4/11/7.png?start_step=0&end_step=24" -o tile.png
+          python3 -c "d=open('tile.png','rb').read(); assert d[:8]==b'\x89PNG\r\n\x1a\n', d[:8]; print('tile PNG', len(d), 'bytes')"
+          curl -fs "localhost:8000/api/forecast/ifs/$RUN/summary?region=india&start_step=0&end_step=24"; echo
+          curl -fs "localhost:8000/api/forecast/ifs/$RUN/timeline?lat=13&lon=80.25" | head -c 300; echo
+          docker stats --no-stream app
+      - uses: actions/setup-node@v4
+        with: { node-version: "24" }
+      - name: Browser e2e against the container
+        working-directory: frontend
+        env: { BASE_URL: "http://localhost:8000", PW_CHANNEL: "" }
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+          npx playwright test
+      - if: always()
+        run: docker logs app | tail -80

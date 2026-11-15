@@ -2,23 +2,34 @@
 from __future__ import annotations
 
 import logging
-import time
+import mimetypes
 import threading
+import time
 import uuid
 from collections import OrderedDict
+from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from .api.geocode import Geocoder
 from .api.routes import router
 from .config import Settings
 from .logging_setup import setup_logging
+from .refresh import Refresher
 from .store import Store
+
+# Some platforms (Windows registry, slim images) lack these; browsers refuse module
+# workers such as MapLibre's maplibre-gl-worker.mjs unless served as JavaScript.
+mimetypes.add_type("text/javascript", ".mjs")
+mimetypes.add_type("text/javascript", ".js")
+mimetypes.add_type("text/css", ".css")
+mimetypes.add_type("image/svg+xml", ".svg")
 
 log = logging.getLogger("app")
 
@@ -58,10 +69,22 @@ class LRUBytes:
 def create_app(settings: Settings | None = None, geocoder: Geocoder | None = None) -> FastAPI:
     settings = settings or Settings()
     setup_logging(settings.log_level)
-    app = FastAPI(title="QUEST Rainfall API", version="0.4.0",
+    store = Store(settings.data_root, settings.array_cache_size)
+    refresher = Refresher(store, settings.data_root, max_step=settings.ingest_max_step,
+                          interval_s=settings.refresh_interval_s, keep_runs=settings.keep_runs)
+
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        if settings.refresh_enabled:
+            refresher.start()          # non-blocking: the API is up while the first ingest runs
+        yield
+        refresher.stop()
+
+    app = FastAPI(title="QUEST Rainfall API", version="0.5.0", lifespan=lifespan,
                   description="ECMWF Open Data precipitation forecasts (IFS). Forecasts, not observations.")
     app.state.settings = settings
-    app.state.store = Store(settings.data_root, settings.array_cache_size)
+    app.state.store = store
+    app.state.refresher = refresher
     app.state.tile_cache = LRUBytes(settings.tile_cache_size)
     app.state.geocoder = geocoder or Geocoder(settings.geocode_url, settings.geocode_timeout_s,
                                               settings.geocode_cache_ttl_s)
@@ -103,7 +126,32 @@ def create_app(settings: Settings | None = None, geocoder: Geocoder | None = Non
         return _err(500, "internal server error", rid(request))   # never leak internals
 
     app.include_router(router)
+    if settings.static_dir:
+        _mount_spa(app, Path(settings.static_dir))
     return app
+
+
+def _mount_spa(app: FastAPI, root: Path) -> None:
+    """Serve the built React app from the same origin as the API.
+
+    Real files are returned as-is (hashed assets get long-lived caching); any other
+    non-API path returns index.html so client-side routes work. /api/* never falls back.
+    """
+    root = root.resolve()
+    index = root / "index.html"
+    if not index.is_file():
+        raise RuntimeError(f"static_dir {root} has no index.html; build the frontend first")
+
+    @app.api_route("/{path:path}", methods=["GET", "HEAD"], include_in_schema=False)
+    def spa(path: str, request: Request):
+        if path == "api" or path.startswith("api/"):
+            return _err(404, "Not Found", getattr(request.state, "request_id", "-"))
+        target = (root / path).resolve()
+        if path and target.is_file() and target.is_relative_to(root):
+            immutable = target.parent.name == "assets"     # Vite content-hashed files
+            return FileResponse(target, headers={
+                "Cache-Control": "public, max-age=31536000, immutable" if immutable else "public, max-age=300"})
+        return FileResponse(index, headers={"Cache-Control": "no-cache"})
 
 
 app = create_app()

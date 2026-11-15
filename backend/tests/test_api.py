@@ -79,7 +79,9 @@ def arrays(root):
 def test_health(client):
     r = client.get("/api/health")
     assert r.status_code == 200
-    assert r.json() == {"status": "ok", "latest_runs": {"ifs": RUN, "aifs-single": None}, "data_available": True}
+    d = r.json()
+    assert (d["status"], d["latest_runs"], d["data_available"]) == ("ok", {"ifs": RUN, "aifs-single": None}, True)
+    assert d["refresh_enabled"] is False and d["ingest"]["state"] == "idle" and d["ingest"]["horizon_h"] == 72
     assert r.headers["X-Request-ID"]
 
 
@@ -237,7 +239,7 @@ def test_store_window_sums_native_intervals(tmp_path):
     lats, lons = np.array([1.0, 0.0], np.float32), np.array([0.0, 1.0], np.float32)
     np.save(out / "lats.npy", lats); np.save(out / "lons.npy", lons)
     for (a, b), v in {(0, 3): 1.0, (3, 6): 2.0, (6, 9): 4.0}.items():
-        np.savez_compressed(out / f"interval_{a}_{b}.npz", v=np.full((2, 2), v, np.float32))
+        np.save(out / f"interval_{a}_{b}.npy", np.full((2, 2), v, np.float32))
     (out / "manifest.json").write_text('{"steps": [0, 3, 6, 9], "run": "2026-11-15T00:00:00+00:00"}')
     st = Store(tmp_path)
     np.testing.assert_array_equal(st.window("ifs", RUN, 3, 9), np.full((2, 2), 6.0))

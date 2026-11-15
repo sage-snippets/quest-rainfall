@@ -1,0 +1,22 @@
+# Render Blueprint (free plan): one Docker web service built from ./Dockerfile.
+# Free instances: 512 MB RAM, 0.1 CPU, sleep after 15 min idle, ephemeral disk.
+# The app re-ingests the latest ECMWF IFS run on every start, so no paid disk is needed.
+services:
+  - type: web
+    name: quest-rainfall
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /api/health
+    autoDeploy: true
+    envVars:
+      - key: QR_INGEST_MAX_STEP        # forecast horizon (h); keep modest on 0.1 CPU
+        value: "72"
+      - key: QR_REFRESH_INTERVAL_S
+        value: "3600"
+      - key: QR_ARRAY_CACHE_SIZE       # memory-mapped grids; small cache for 512 MB RAM
+        value: "16"
+      - key: QR_TILE_CACHE_SIZE
+        value: "1024"
+      - key: QR_KEEP_RUNS
+        value: "1"

@@ -11,9 +11,10 @@ from __future__ import annotations
 import logging
 import time
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+import httpx
 from ecmwf.opendata import Client
 
 log = logging.getLogger(__name__)
@@ -50,14 +51,35 @@ def _client(source: str, model: str) -> Client:
     return Client(source=source, model=model, resol="0p25")
 
 
-def latest_run(model: str = "ifs", last_step: int = 144, source: str = "ecmwf") -> datetime:
-    """Latest run whose `tp` at `last_step` is published (i.e. the run is complete up to it).
+INDEX_URL = ("https://data.ecmwf.int/forecasts/{d:%Y%m%d}/{d:%H}z/{model}/0p25/oper/"
+             "{d:%Y%m%d%H}0000-{step}h-oper-fc.index")
 
-    ECMWF publishes steps progressively, so probing the *last* step we need
-    avoids picking up a run that is still being disseminated.
+
+def latest_run(model: str = "ifs", last_step: int = 144, lookback_h: int = 96,
+               now: datetime | None = None, client: httpx.Client | None = None) -> datetime:
+    """Latest 00z/12z run whose `tp` index for `last_step` is published (run complete to it).
+
+    The official client's latest() also returns 06/18z runs, which for IFS are a different
+    stream (scda) that stops at 90 h, so we probe the 00/12z (stream oper) runs ourselves,
+    newest first, within ECMWF's ~4-day retention window.
     """
-    run = _client(source, model).latest(type="fc", stream="oper", param="tp", step=last_step)
-    return run.replace(tzinfo=timezone.utc)
+    now = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    t = now.replace(hour=12 if now.hour >= 12 else 0, minute=0, second=0, microsecond=0)
+    own = client is None
+    client = client or httpx.Client(timeout=15, follow_redirects=True)
+    try:
+        while t >= now - timedelta(hours=lookback_h):
+            url = INDEX_URL.format(d=t, model=model, step=last_step)
+            r = client.head(url)
+            if r.status_code == 200:
+                return t
+            if r.status_code not in (403, 404):
+                r.raise_for_status()          # 5xx etc.: let the caller retry later
+            t -= timedelta(hours=12)
+    finally:
+        if own:
+            client.close()
+    raise AcquisitionError(f"no complete 00/12z {model} run up to step {last_step} in the last {lookback_h} h")
 
 
 def fetch_tp(

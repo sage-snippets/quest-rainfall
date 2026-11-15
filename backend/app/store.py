@@ -52,22 +52,22 @@ class Store:
         p = self.root / model / run / name
         if not p.exists():
             raise NotFound(f"{name} missing for {model}/{run}")
-        arr = np.load(p)["v"] if p.suffix == ".npz" else np.load(p)
-        arr.setflags(write=False)       # cached arrays are shared; never mutate
-        return arr
+        # Memory-mapped and read-only: the OS page cache holds hot grids, so RAM use stays
+        # small on constrained hosts, and cached arrays can never be mutated by callers.
+        return np.load(p, mmap_mode="r")
 
     def axes(self, model: str, run: str) -> tuple[np.ndarray, np.ndarray]:
         return (self._load(model, run, "lats.npy").astype(np.float64),
                 self._load(model, run, "lons.npy").astype(np.float64))
 
     def interval(self, model: str, run: str, a: int, b: int) -> np.ndarray:
-        return self._load(model, run, f"interval_{a}_{b}.npz")
+        return self._load(model, run, f"interval_{a}_{b}.npy")
 
     def cumulative(self, model: str, run: str, step: int) -> np.ndarray:
         if step == 0:
             lats, lons = self.axes(model, run)
             return np.zeros((lats.size, lons.size), dtype=np.float32)
-        return self._load(model, run, f"cumulative_{step}.npz")
+        return self._load(model, run, f"cumulative_{step}.npy")
 
     def window(self, model: str, run: str, start: int, end: int) -> np.ndarray:
         """Precipitation (mm) that fell between forecast steps start and end.

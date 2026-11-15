@@ -119,28 +119,81 @@ def normalise_grid(values: np.ndarray, lats: np.ndarray, lons: np.ndarray):
     return np.ascontiguousarray(values), lats.copy(), lons
 
 
+def _next_message(f):
+    """Next GRIB handle from an open file, or None at EOF.
+
+    ecCodes read errors are re-raised as GribValidationError *after* leaving the except
+    block: the original traceback references ecCodes frames that keep its native file
+    handle open, which leaks the handle and (on Windows) blocks deleting the file.
+    ecCodes ties that handle to the Python file object, so callers must also drop their
+    reference to `f` when an error propagates (see iter_tp).
+    """
+    try:
+        return eccodes.codes_grib_new_from_file(f)
+    except Exception as e:
+        err = f"{type(e).__name__}: {e}"
+    del f
+    raise GribValidationError(f"undecodable GRIB message: {err}")
+
+
+def _decode(gid) -> TpField:
+    m = {k: eccodes.codes_get(gid, k) for k in _KEYS}
+    validate_meta(m)
+    vals = eccodes.codes_get_values(gid).astype(np.float64).reshape(m["Nj"], m["Ni"])
+    if m["bitmapPresent"]:
+        vals[vals == m["missingValue"]] = np.nan
+    lats, lons = _axes(m)
+    vals, lats, lons = normalise_grid(vals, lats, lons)
+    return TpField(
+        run_date=m["dataDate"], run_time=m["dataTime"],
+        start_step=m["startStep"], end_step=m["endStep"],
+        lats=lats, lons=lons, values_mm=vals * M_TO_MM,
+        quantum_mm=packing_quantum_m(m) * M_TO_MM, meta=m,
+    )
+
+
+def iter_tp(path: str | Path):
+    """Yield validated tp fields one at a time, in file order (bounded memory).
+
+    Requires a single forecast run and strictly increasing steps, which is how
+    app.acquisition writes files. Use read_tp() for arbitrary message order.
+    """
+    first = prev = None
+    f = open(path, "rb")
+    try:
+        while (gid := _next_message(f)) is not None:
+            try:
+                fld = _decode(gid)
+            finally:
+                eccodes.codes_release(gid)
+            if first is None:
+                first = fld
+            elif (fld.run_date, fld.run_time) != (first.run_date, first.run_time):
+                raise GribValidationError("file mixes forecast runs")
+            if prev is not None and fld.end_step <= prev.end_step:
+                raise GribValidationError(f"steps not strictly increasing: {prev.end_step} -> {fld.end_step}")
+            prev = fld
+            yield fld
+    finally:
+        f.close()
+        f = None  # release ecCodes' native handle even while an exception propagates
+    if first is None:
+        raise GribValidationError(f"no tp messages in {path}")
+
+
 def read_tp(path: str | Path) -> list[TpField]:
     """Decode and validate every tp message in a GRIB2 file, sorted by end step."""
     fields: list[TpField] = []
-    with open(path, "rb") as f:
-        while (gid := eccodes.codes_grib_new_from_file(f)) is not None:
+    f = open(path, "rb")
+    try:
+        while (gid := _next_message(f)) is not None:
             try:
-                m = {k: eccodes.codes_get(gid, k) for k in _KEYS}
-                validate_meta(m)
-                vals = eccodes.codes_get_values(gid).astype(np.float64).reshape(m["Nj"], m["Ni"])
+                fields.append(_decode(gid))
             finally:
                 eccodes.codes_release(gid)
-            if m["bitmapPresent"]:
-                vals[vals == m["missingValue"]] = np.nan
-            lats, lons = _axes(m)
-            vals, lats, lons = normalise_grid(vals, lats, lons)
-            quantum_m = packing_quantum_m(m)
-            fields.append(TpField(
-                run_date=m["dataDate"], run_time=m["dataTime"],
-                start_step=m["startStep"], end_step=m["endStep"],
-                lats=lats, lons=lons, values_mm=vals * M_TO_MM,
-                quantum_mm=quantum_m * M_TO_MM, meta=m,
-            ))
+    finally:
+        f.close()
+        f = None  # see iter_tp
     if not fields:
         raise GribValidationError(f"no tp messages in {path}")
     runs = {(x.run_date, x.run_time) for x in fields}

@@ -22,7 +22,7 @@ from app.processing.precip import normalise_grid, _axes  # noqa: E402
 d = Path(sys.argv[1])
 man = json.loads((d / "manifest.json").read_text())
 lats, lons = np.load(d / "lats.npy"), np.load(d / "lons.npy")
-ivs = {(i["start_step"], i["end_step"]): np.load(d / f"interval_{i['start_step']}_{i['end_step']}.npz")["v"]
+ivs = {(i["start_step"], i["end_step"]): np.load(d / f"interval_{i['start_step']}_{i['end_step']}.npy")
        for i in man["intervals"]}
 
 print("== Global maximum per interval (mm)")

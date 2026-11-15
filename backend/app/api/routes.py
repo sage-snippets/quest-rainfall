@@ -94,7 +94,9 @@ def health(req: Request):
     for m in MODELS:
         runs = _store(req).runs(m)
         latest[m] = runs[0] if runs else None
-    return {"status": "ok", "latest_runs": latest, "data_available": latest["ifs"] is not None}
+    return {"status": "ok", "latest_runs": latest, "data_available": latest["ifs"] is not None,
+            "ingest": req.app.state.refresher.status,
+            "refresh_enabled": req.app.state.settings.refresh_enabled}
 
 
 @router.get("/models", response_model=list[ModelInfo])

@@ -1,2 +1,6 @@
 -r requirements.txt
+# Tests and verification scripts (independent cfgrib/xarray decoder cross-check)
 pytest==9.2.0
+cfgrib==0.9.15.1
+xarray==2026.9.0
+pandas==3.1.1
